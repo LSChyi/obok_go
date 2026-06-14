@@ -8,7 +8,7 @@ import (
 	"os"
 	"runtime"
 
-	"obok/kobo"
+	"github.com/LSChyi/obok_go/kobo"
 
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/sync/errgroup"

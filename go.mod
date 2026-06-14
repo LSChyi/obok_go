@@ -1,4 +1,4 @@
-module obok
+module github.com/LSChyi/obok_go
 
 go 1.26.2
 
