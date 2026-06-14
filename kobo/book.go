@@ -71,6 +71,28 @@ func (b *Book) DecryptBook(saveRoot string, userKeys [][]byte) error {
 	return b.saveDecrypted(saveRoot, entries)
 }
 
+func (b *Book) ConservativeDecryptBook(saveRoot string, userKeys [][]byte) error {
+	dat, err := os.ReadFile(b.FilePath)
+	if err != nil {
+		return fmt.Errorf("failed at reading raw book file: %w", err)
+	}
+
+	if b.Type == BookTypeDRMFree {
+		return os.WriteFile(filepath.Join(saveRoot, b.Title+".epub"), dat, 0644)
+	}
+
+	entries, err := b.prepareDecrypt(dat)
+	if err != nil {
+		return fmt.Errorf("failed at preparing decryption: %w", err)
+	}
+
+	if err := b.tryDecryptAll(userKeys, entries); err != nil {
+		return fmt.Errorf("failed at trying all keys for decryption: %w", err)
+	}
+
+	return b.saveDecrypted(saveRoot, entries)
+}
+
 func (b *Book) prepareDecrypt(dat []byte) ([]*Entry, error) {
 	r, err := zip.NewReader(bytes.NewReader(dat), int64(len(dat)))
 	if err != nil {
@@ -143,12 +165,44 @@ func (b *Book) findValidKey(keys [][]byte, entries []*Entry) ([]byte, error) {
 	}
 
 	for _, key := range keys {
-		if _, err := testKoboFile.Decrypt(key, minEntry.RawContent); err != nil {
+		decrypted, err := testKoboFile.Decrypt(key, minEntry.RawContent)
+		if err != nil {
 			continue
 		}
+		if err := testKoboFile.check(decrypted); err != nil {
+			continue
+		}
+
 		return key, nil
 	}
-	return nil, fmt.Errorf("No key matched")
+	return nil, fmt.Errorf("no key matched")
+}
+
+func (b *Book) tryDecryptAll(userKeys [][]byte, entries []*Entry) error {
+	for _, key := range userKeys {
+		if err := b.tryDecryptAllWithKey(key, entries); err == nil { // If a key is able to decrypt all without error
+			return nil
+		}
+	}
+	return fmt.Errorf("no key is able to decrypt the whole book")
+}
+
+func (b *Book) tryDecryptAllWithKey(key []byte, entries []*Entry) error {
+	for _, entry := range entries {
+		if koboFile, ok := b.EncryptedFiles[entry.Name]; ok {
+			content, err := koboFile.Decrypt(key, entry.RawContent)
+			if err != nil {
+				return err
+			}
+			if err := koboFile.check(content); err != nil {
+				return err
+			}
+			entry.Content = content
+		} else {
+			entry.Content = entry.RawContent
+		}
+	}
+	return nil
 }
 
 func (b *Book) buildEncryptedFiles(db *sql.DB) error {
@@ -281,10 +335,6 @@ func (f *File) Decrypt(key, rawContent []byte) ([]byte, error) {
 	pageDecrypted, err := AESHelper(decryptedKey, rawContent, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed at decrypting file content: %w", err)
-	}
-
-	if err := f.check(pageDecrypted); err != nil {
-		return nil, fmt.Errorf("decrypted content is invalid: %w", err)
 	}
 	return pageDecrypted, nil
 }
