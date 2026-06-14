@@ -119,6 +119,10 @@ func (b *Book) prepareDecrypt(dat []byte) ([]*Entry, error) {
 		entries = append(entries, entry)
 	}
 
+	if err := b.buildMIME(entries); err != nil {
+		return nil, fmt.Errorf("failed at building MIME: %w", err)
+	}
+
 	return entries, nil
 }
 
@@ -239,26 +243,14 @@ func (b *Book) buildEncryptedFiles(db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-
-	return b.buildMIME()
+	return nil
 }
 
-func (b *Book) buildMIME() error {
-	zin, err := zip.OpenReader(b.FilePath)
-	if err != nil {
-		return err
-	}
-	defer zin.Close()
-
+func (b *Book) buildMIME(entries []*Entry) error {
 	readFile := func(name string) ([]byte, error) {
-		for _, f := range zin.File {
-			if f.Name == name {
-				rc, err := f.Open()
-				if err != nil {
-					return nil, err
-				}
-				defer rc.Close()
-				return io.ReadAll(rc)
+		for _, entry := range entries {
+			if entry.Name == name {
+				return entry.RawContent, nil
 			}
 		}
 		return nil, fmt.Errorf("file not found")
