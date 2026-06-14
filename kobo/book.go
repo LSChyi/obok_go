@@ -46,34 +46,14 @@ func (b *Book) DecryptBook(saveRoot string, userKeys [][]byte) error {
 		return os.WriteFile(filepath.Join(saveRoot, b.Title+".epub"), dat, 0644)
 	}
 
-	r, err := zip.NewReader(bytes.NewReader(dat), int64(len(dat)))
+	entries, err := b.prepareDecrypt(dat)
 	if err != nil {
-		return err
-	}
-
-	entries := make([]*Entry, 0, len(r.File))
-	for _, f := range r.File {
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("failed at opening compressed file from book: %w", err)
-		}
-		defer rc.Close()
-
-		content, err := io.ReadAll(rc)
-		if err != nil {
-			return fmt.Errorf("failed at extracting compressing file from book: %w", err)
-		}
-
-		entry := &Entry{
-			Name:       f.Name,
-			RawContent: content,
-		}
-		entries = append(entries, entry)
+		return fmt.Errorf("failed at preparing decryption: %w", err)
 	}
 
 	key, err := b.findValidKey(userKeys, entries)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed at finding key for decryption: %w", err)
 	}
 
 	for _, entry := range entries {
@@ -88,6 +68,39 @@ func (b *Book) DecryptBook(saveRoot string, userKeys [][]byte) error {
 		}
 	}
 
+	return b.saveDecrypted(saveRoot, entries)
+}
+
+func (b *Book) prepareDecrypt(dat []byte) ([]*Entry, error) {
+	r, err := zip.NewReader(bytes.NewReader(dat), int64(len(dat)))
+	if err != nil {
+		return nil, fmt.Errorf("failed at creating unzip reader: %w", err)
+	}
+
+	entries := make([]*Entry, 0, len(r.File))
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed at opening compressed file from book: %w", err)
+		}
+		defer rc.Close()
+
+		content, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, fmt.Errorf("failed at extracting compressing file from book: %w", err)
+		}
+
+		entry := &Entry{
+			Name:       f.Name,
+			RawContent: content,
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+func (b *Book) saveDecrypted(saveRoot string, entries []*Entry) error {
 	buf := new(bytes.Buffer)
 	w := zip.NewWriter(buf)
 	for _, entry := range entries {
@@ -105,7 +118,7 @@ func (b *Book) DecryptBook(saveRoot string, userKeys [][]byte) error {
 	}
 
 	if err := os.WriteFile(filepath.Join(saveRoot, b.Title+".epub"), buf.Bytes(), 0644); err != nil {
-		return err
+		return fmt.Errorf("failed at saving decrypted book into filesystem: %w", err)
 	}
 
 	return nil
