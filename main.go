@@ -45,16 +45,16 @@ func main() {
 		books = selectBook(books)
 	}
 
-	if err := decryptBooks(l, books, saveRoot, conservative); err != nil {
+	if err := decryptBooks(l, books, numRoutine, saveRoot, conservative); err != nil {
 		log.Fatalf("Failed at decrypting books: %v", err)
 	}
 	log.Printf("Complete decrypting %d books", len(books))
 }
 
-func decryptBooks(l *kobo.Library, books []*kobo.Book, saveRoot string, conservative bool) error {
+func decryptBooks(l *kobo.Library, books []*kobo.Book, numRoutine int, saveRoot string, conservative bool) error {
 	bar := progressbar.Default(int64(len(books)))
 	g, _ := errgroup.WithContext(context.Background())
-	g.SetLimit(runtime.NumCPU())
+	g.SetLimit(numRoutine)
 	for _, book := range books {
 		g.Go(func() error {
 			if conservative {
