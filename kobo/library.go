@@ -30,7 +30,7 @@ type Library struct {
 
 	onceGetBooks func() ([]*Book, error)
 	onceGetKeys  func() ([][]byte, error)
-	userIDs      []string
+	onceGetIDs   func() ([]string, error)
 }
 
 func NewLibrary() (l *Library, err error) {
@@ -54,6 +54,7 @@ func NewLibrary() (l *Library, err error) {
 	}
 	ret.onceGetBooks = sync.OnceValues(ret.getBooks)
 	ret.onceGetKeys = sync.OnceValues(ret.getKeys)
+	ret.onceGetIDs = sync.OnceValues(ret.getIDs)
 
 	return ret, nil
 }
@@ -71,27 +72,7 @@ func (l *Library) UserKeys() ([][]byte, error) {
 }
 
 func (l *Library) UserIDs() ([]string, error) {
-	if len(l.userIDs) != 0 {
-		return l.userIDs, nil
-	}
-
-	ids := make([]string, 0)
-
-	rows, err := l.koboDB.Query("SELECT UserID from user")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		id := ""
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to get user ID: %v", err)
-		}
-		ids = append(ids, id)
-	}
-	l.userIDs = ids
-	return l.userIDs, nil
+	return l.onceGetIDs()
 }
 
 func (l *Library) getBooks() ([]*Book, error) {
@@ -159,6 +140,25 @@ func (l *Library) getKeys() ([][]byte, error) {
 	}
 
 	return ret, nil
+}
+
+func (l *Library) getIDs() ([]string, error) {
+	ids := make([]string, 0)
+
+	rows, err := l.koboDB.Query("SELECT UserID from user")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		id := ""
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to get user ID: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (l *Library) buildKepubBooks() ([]*Book, error) {
