@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -27,9 +28,9 @@ type Library struct {
 	koboDB  *sql.DB
 	bookDir string
 
-	books   []*Book
-	keys    [][]byte
-	userIDs []string
+	onceGetBooks func() ([]*Book, error)
+	keys         [][]byte
+	userIDs      []string
 }
 
 func NewLibrary() (l *Library, err error) {
@@ -46,11 +47,14 @@ func NewLibrary() (l *Library, err error) {
 		return nil, err
 	}
 
-	return &Library{
+	ret := &Library{
 		koboDir: koboDir,
 		koboDB:  db,
 		bookDir: bookDir,
-	}, nil
+	}
+	ret.onceGetBooks = sync.OnceValues(ret.getBooks)
+
+	return ret, nil
 }
 
 func (l *Library) Close() error {
@@ -58,33 +62,7 @@ func (l *Library) Close() error {
 }
 
 func (l *Library) Books() ([]*Book, error) {
-	if len(l.books) != 0 {
-		return l.books, nil
-	}
-
-	kepubBooks, err := l.buildKepubBooks()
-	if err != nil {
-		return nil, err
-	}
-
-	encryptedVolumeIDs := make(map[string]struct{})
-	for _, book := range kepubBooks {
-		encryptedVolumeIDs[book.VolumeID] = struct{}{}
-	}
-	drmFreeBooks, err := l.buildDRMFreeBooks(encryptedVolumeIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	books := append(kepubBooks, drmFreeBooks...)
-	for _, b := range books {
-		if err := b.buildEncryptedFiles(l.koboDB); err != nil {
-			return nil, fmt.Errorf("failed at building encrypted file for book %s: %v", b.Title, err)
-		}
-	}
-
-	l.books = books
-	return l.books, nil
+	return l.onceGetBooks()
 }
 
 func (l *Library) UserKeys() ([][]byte, error) {
@@ -160,6 +138,31 @@ func (l *Library) UserIDs() ([]string, error) {
 	return l.userIDs, nil
 }
 
+func (l *Library) getBooks() ([]*Book, error) {
+	kepubBooks, err := l.buildKepubBooks()
+	if err != nil {
+		return nil, err
+	}
+
+	encryptedVolumeIDs := make(map[string]struct{})
+	for _, book := range kepubBooks {
+		encryptedVolumeIDs[book.VolumeID] = struct{}{}
+	}
+	drmFreeBooks, err := l.buildDRMFreeBooks(encryptedVolumeIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	books := append(kepubBooks, drmFreeBooks...)
+	for _, b := range books {
+		if err := b.buildEncryptedFiles(l.koboDB); err != nil {
+			return nil, fmt.Errorf("failed at building encrypted file for book %s: %v", b.Title, err)
+		}
+	}
+
+	return books, nil
+}
+
 func (l *Library) buildKepubBooks() ([]*Book, error) {
 	books := make([]*Book, 0)
 
@@ -182,7 +185,6 @@ func (l *Library) buildKepubBooks() ([]*Book, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		l.books = nil
 		return nil, err
 	}
 
