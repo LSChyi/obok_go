@@ -75,6 +75,14 @@ func (l *Library) UserIDs() ([]string, error) {
 	return l.onceGetIDs()
 }
 
+func (l *Library) DecryptBook(saveRoot string, book *Book) error {
+	keys, err := l.UserKeys()
+	if err != nil {
+		return fmt.Errorf("failed at getting decrypt keys: %w", err)
+	}
+	return book.DecryptBook(saveRoot, keys)
+}
+
 func (l *Library) getBooks() ([]*Book, error) {
 	kepubBooks, err := l.buildKepubBooks()
 	if err != nil {

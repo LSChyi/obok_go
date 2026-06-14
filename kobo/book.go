@@ -9,7 +9,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/andreburgaud/crypt2go/ecb"
@@ -32,6 +34,108 @@ type Book struct {
 	FilePath       string
 	Type           BookType
 	EncryptedFiles map[string]*File
+}
+
+func (b *Book) DecryptBook(saveRoot string, userKeys [][]byte) error {
+	dat, err := os.ReadFile(b.FilePath)
+	if err != nil {
+		return fmt.Errorf("failed at reading raw book file: %w", err)
+	}
+
+	if b.Type == BookTypeDRMFree {
+		return os.WriteFile(filepath.Join(saveRoot, b.Title+".epub"), dat, 0644)
+	}
+
+	r, err := zip.NewReader(bytes.NewReader(dat), int64(len(dat)))
+	if err != nil {
+		return err
+	}
+
+	entries := make([]*Entry, 0, len(r.File))
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("failed at opening compressed file from book: %w", err)
+		}
+		defer rc.Close()
+
+		content, err := io.ReadAll(rc)
+		if err != nil {
+			return fmt.Errorf("failed at extracting compressing file from book: %w", err)
+		}
+
+		entry := &Entry{
+			Name:       f.Name,
+			RawContent: content,
+		}
+		entries = append(entries, entry)
+	}
+
+	key, err := b.findValidKey(userKeys, entries)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if koboFile, ok := b.EncryptedFiles[entry.Name]; ok {
+			content, err := koboFile.Decrypt(key, entry.RawContent)
+			if err != nil {
+				return err
+			}
+			entry.Content = content
+		} else {
+			entry.Content = entry.RawContent
+		}
+	}
+
+	buf := new(bytes.Buffer)
+	w := zip.NewWriter(buf)
+	for _, entry := range entries {
+		f, err := w.Create(entry.Name)
+		if err != nil {
+			return fmt.Errorf("failed at creating zip content: %w", err)
+		}
+		if _, err = f.Write(entry.Content); err != nil {
+			return fmt.Errorf("failed at compressing zip content: %w", err)
+		}
+	}
+
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("failed at completing the zip file: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(saveRoot, b.Title+".epub"), buf.Bytes(), 0644); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *Book) findValidKey(keys [][]byte, entries []*Entry) ([]byte, error) {
+	var minEntry *Entry
+	var testKoboFile *File
+	for _, f := range entries {
+		if koboFile, ok := b.EncryptedFiles[f.Name]; ok {
+			if minEntry == nil {
+				minEntry = f
+				testKoboFile = koboFile
+				continue
+			}
+
+			if len(minEntry.RawContent) > len(f.RawContent) {
+				minEntry = f
+				testKoboFile = koboFile
+			}
+		}
+	}
+
+	for _, key := range keys {
+		if _, err := testKoboFile.Decrypt(key, minEntry.RawContent); err != nil {
+			continue
+		}
+		return key, nil
+	}
+	return nil, fmt.Errorf("No key matched")
 }
 
 func (b *Book) buildEncryptedFiles(db *sql.DB) error {
@@ -251,4 +355,10 @@ type Package struct {
 type Item struct {
 	MediaType string `xml:"media-type,attr"`
 	Href      string `xml:"href,attr"`
+}
+
+type Entry struct {
+	Name       string
+	RawContent []byte
+	Content    []byte
 }
