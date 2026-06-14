@@ -29,7 +29,7 @@ type Library struct {
 	bookDir string
 
 	onceGetBooks func() ([]*Book, error)
-	keys         [][]byte
+	onceGetKeys  func() ([][]byte, error)
 	userIDs      []string
 }
 
@@ -53,6 +53,7 @@ func NewLibrary() (l *Library, err error) {
 		bookDir: bookDir,
 	}
 	ret.onceGetBooks = sync.OnceValues(ret.getBooks)
+	ret.onceGetKeys = sync.OnceValues(ret.getKeys)
 
 	return ret, nil
 }
@@ -66,52 +67,7 @@ func (l *Library) Books() ([]*Book, error) {
 }
 
 func (l *Library) UserKeys() ([][]byte, error) {
-	if len(l.keys) != 0 {
-		return l.keys, nil
-	}
-
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, fmt.Errorf("failed at getting mac addresses (building user keys): %v", err)
-	}
-
-	macAddrs := make([]string, 0, len(interfaces))
-	for _, iface := range interfaces {
-		if len(iface.HardwareAddr) == 0 {
-			continue
-		}
-		macAddrs = append(macAddrs, strings.ToUpper(iface.HardwareAddr.String()))
-	}
-
-	userIDs, err := l.UserIDs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user IDs for building keys: %v", err)
-	}
-
-	ret := make([][]byte, 0, len(macAddrs))
-	for _, mac := range macAddrs {
-		for _, hash := range KoboHashKeys {
-			h := sha256.New()
-			h.Write(append(hash, []byte(mac)...))
-			deviceID := hex.EncodeToString(h.Sum(nil))
-
-			for _, id := range userIDs {
-				h := sha256.New()
-				h.Write(append([]byte(deviceID), []byte(id)...))
-				userKey := hex.EncodeToString(h.Sum(nil))
-				hexKey, err := hex.DecodeString(userKey[32:])
-				if err != nil {
-					return nil, fmt.Errorf("failed to build key: %v", err)
-				}
-				//if hex.EncodeToString(hexKey) == "5fec4a2ea04ac5de5de71f23358c8bdb" {
-				ret = append(ret, hexKey)
-				//}
-			}
-		}
-	}
-
-	l.keys = ret
-	return ret, nil
+	return l.onceGetKeys()
 }
 
 func (l *Library) UserIDs() ([]string, error) {
@@ -161,6 +117,48 @@ func (l *Library) getBooks() ([]*Book, error) {
 	}
 
 	return books, nil
+}
+
+func (l *Library) getKeys() ([][]byte, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("failed at getting mac addresses (building user keys): %v", err)
+	}
+
+	macAddrs := make([]string, 0, len(interfaces))
+	for _, iface := range interfaces {
+		if len(iface.HardwareAddr) == 0 {
+			continue
+		}
+		macAddrs = append(macAddrs, strings.ToUpper(iface.HardwareAddr.String()))
+	}
+
+	userIDs, err := l.UserIDs()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user IDs for building keys: %v", err)
+	}
+
+	ret := make([][]byte, 0, len(macAddrs))
+	for _, mac := range macAddrs {
+		for _, hash := range KoboHashKeys {
+			h := sha256.New()
+			h.Write(append(hash, []byte(mac)...))
+			deviceID := hex.EncodeToString(h.Sum(nil))
+
+			for _, id := range userIDs {
+				h := sha256.New()
+				h.Write(append([]byte(deviceID), []byte(id)...))
+				userKey := hex.EncodeToString(h.Sum(nil))
+				hexKey, err := hex.DecodeString(userKey[32:])
+				if err != nil {
+					return nil, fmt.Errorf("failed to build key: %v", err)
+				}
+				ret = append(ret, hexKey)
+			}
+		}
+	}
+
+	return ret, nil
 }
 
 func (l *Library) buildKepubBooks() ([]*Book, error) {
