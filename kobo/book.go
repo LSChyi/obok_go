@@ -334,7 +334,11 @@ func (f *File) Decrypt(key, rawContent []byte) ([]byte, error) {
 func (f *File) check(content []byte) error {
 	switch f.MIMEType {
 	case "application/xhtml+xml":
-		return validateApplicationXHTML(content)
+		var v interface{}
+		if err := xml.Unmarshal(content, &v); err != nil {
+			return fmt.Errorf("file MIME is %s, but encounter error while tring to unmarshal as xml: %w", err)
+		}
+		return nil
 	default:
 		fileType, err := filetype.Match(content)
 		if err != nil {
@@ -363,34 +367,6 @@ func AESHelper(key, ct []byte, unpad bool) ([]byte, error) {
 		}
 	}
 	return pt, nil
-}
-
-func validateApplicationXHTML(contents []byte) error {
-	textOffset := 0
-	stride := 1
-
-	if len(contents) >= 3 && bytes.Equal(contents[:3], []byte("\xef\xbb\xbf")) {
-		textOffset = 3
-	} else if len(contents) >= 2 && bytes.Equal(contents[:2], []byte("\xfe\xff")) {
-		textOffset = 3 // Keeping textoffset=3 as per your original code logic, though 2 is typically expected for UTF-16 BE BOM
-		stride = 2
-	} else if len(contents) >= 2 && bytes.Equal(contents[:2], []byte("\xff\xfe")) {
-		textOffset = 2
-		stride = 2
-	}
-
-	for i := 0; i < 5; i++ {
-		idx := textOffset + (i * stride)
-		if idx >= len(contents) {
-			break
-		}
-		char := contents[idx]
-		if char < 32 || char > 127 {
-			return fmt.Errorf("Bad character at %d, value %d\n", idx, char)
-		}
-	}
-
-	return nil
 }
 
 type Container struct {
